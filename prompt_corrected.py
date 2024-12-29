@@ -9,19 +9,19 @@ import os
 import time
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 class GeminiResearchChatbot:
     def __init__(self, semantics_path="Semantics.json"):
-        # Load API keys from environment variables
+        # Get API keys from environment variables
         self.api_keys = [
-            os.getenv("GEMINI_API_KEY_1"),
-            os.getenv("GEMINI_API_KEY_2"),
-            os.getenv("GEMINI_API_KEY_3"),
-            os.getenv("GEMINI_API_KEY_4"),
-            os.getenv("GEMINI_API_KEY_5"),
-            os.getenv("GEMINI_API_KEY_6")
+            os.getenv('GEMINI_API_KEY_1'),
+            os.getenv('GEMINI_API_KEY_2'),
+            os.getenv('GEMINI_API_KEY_3'),
+            os.getenv('GEMINI_API_KEY_4'),
+            os.getenv('GEMINI_API_KEY_5'),
+            os.getenv('GEMINI_API_KEY_6')
         ]
         self.current_key_index = 0
         self.set_current_api_key()
@@ -34,6 +34,7 @@ class GeminiResearchChatbot:
         self.documents = None
         self.semantics = self.load_semantics(semantics_path)
 
+    # Rest of the class implementation remains exactly the same
     def set_current_api_key(self):
         genai.configure(api_key=self.api_keys[self.current_key_index])
 
@@ -49,7 +50,7 @@ class GeminiResearchChatbot:
                     'attributes': details.get('attributes', []),
                     'attributes_text': ', '.join(details.get('attributes', [])),
                     'relations': details.get('relations', {}),
-                    'relations_text': ', '.join([ 
+                    'relations_text': ', '.join([
                         f"{rel}: {', '.join(values)}" 
                         for rel, values in details.get('relations', {}).items()
                     ])
@@ -209,36 +210,93 @@ def main():
     if st.button("Add Question"):
         if new_question.strip():
             st.session_state["questions"].append(new_question.strip())
-            st.session_state["types"].append(answer_type.strip())
-
-    if len(st.session_state["questions"]) > 0:
-        questions_df = pd.DataFrame({
-            "Questions": st.session_state["questions"],
-            "Answer Types": st.session_state["types"]
-        })
-
-        st.write("Questions in the Queue:")
-        st.write(questions_df)
-
-    uploaded_file = st.file_uploader("Upload your Research Paper (PDF)", type=["pdf"])
-
-    if uploaded_file:
-        if chatbot.load_pdf(uploaded_file):
-            st.success("PDF uploaded and ready for processing.")
+            st.session_state["types"].append(answer_type)
+            st.success(f"Question added: {new_question} ({answer_type})")
         else:
-            st.error("There was an error with your PDF.")
+            st.warning("Question cannot be empty.")
 
-    if st.button("Ask"):
-        question = new_question.strip()
-        answer_type = answer_type.strip()
-        if question:
-            answer = chatbot.ask_question(question)
-            if answer:
-                st.write(f"Answer: {answer}")
-            else:
-                st.write("Sorry, I couldn't retrieve an answer.")
-        else:
-            st.write("Please enter a question.")
+    st.write("### Questions:")
+    if st.session_state["questions"]:
+        for i, (question, q_type) in enumerate(zip(st.session_state["questions"], st.session_state["types"]), start=1):
+            st.write(f"{i}. {question} ({q_type})")
+
+    default_question = "Title: What is the title of the pdf?"
+    uploaded_files = st.file_uploader("Upload your PDF files", type="pdf", accept_multiple_files=True)
+
+    if (st.session_state["questions"] or uploaded_files) and uploaded_files:
+        if "results" not in st.session_state:
+            all_results = []
+
+            for uploaded_file in uploaded_files:
+                if chatbot.load_pdf(uploaded_file):
+                    st.success(f"PDF '{uploaded_file.name}' loaded successfully!")
+
+                    results_for_pdf = {"File": uploaded_file.name}
+                    for question, q_type in zip([default_question] + st.session_state["questions"], ["String"] + st.session_state["types"]):
+                        column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
+                        answer = chatbot.ask_question(question)
+                        results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
+
+                    all_results.append(results_for_pdf)
+
+            st.session_state["results"] = pd.DataFrame(all_results)
+
+        df = st.session_state["results"]
+        st.write("### All Results (Before Filtering)")
+        st.dataframe(df)
+
+        if not df.empty:
+            st.write("### Filter Results")
+            original_df = st.session_state["results"]
+
+            for column, q_type in zip([col for col in df.columns if col.lower() != "file"], ["String"] + st.session_state["types"]):
+                df[column] = df[column].astype(str)  # Ensure column is string for consistent processing
+
+                if q_type == "Integer/Float":
+                    # Check if the column data matches "value unit" or "value ± value unit" formats
+                    pattern = r"^\s*\d+(\.\d+)?(\s*±\s*\d+(\.\d+)?)?\s*[a-zA-Z²⁻¹/]*.*$"
+                    matches_format = df[column].str.match(pattern).fillna(False)
+
+                    # Replace invalid entries with NaN
+                    df.loc[~matches_format, column] = None
+
+                    if matches_format.any():  # Ensure there are valid numeric entries
+                        # Extract the primary numeric value before ± or units
+                        numeric_values = df[column].str.extract(r"([0-9]+(?:\.[0-9]+)?)")[0]
+                        numeric_values = pd.to_numeric(numeric_values, errors='coerce')
+
+                        if numeric_values.notnull().any():  # Ensure there are valid numeric values
+                            min_val, max_val = numeric_values.min(), numeric_values.max()
+                            if min_val == max_val:
+                                max_val = min_val + 1  # Adjust if min and max are the same
+
+                            # Slider for filtering numeric values
+                            lower_limit, upper_limit = st.slider(
+                                f"Filter for {column}:",
+                                min_value=float(min_val),
+                                max_value=float(max_val),
+                                value=(float(min_val), float(max_val)),
+                                step=0.1,
+                            )
+
+                            # Filter the DataFrame based on the slider range, include null values
+                            df = df[
+                                numeric_values.between(lower_limit, upper_limit, inclusive="both") | 
+                                df[column].isnull()
+                            ]
+
+                else:  # Use text input filter for non-numeric columns
+                    filter_value = st.text_input(f"Filter for {column}:")
+                    if filter_value.strip():
+                        # Include rows with null values
+                        df = df[
+                            df[column].str.contains(filter_value, case=False, na=False) | 
+                            df[column].isnull()
+                        ]
+
+            # Display the filtered results
+            st.write("### Filtered Results")
+            st.dataframe(df)
 
 if __name__ == "__main__":
     main()
