@@ -8,7 +8,6 @@ import tempfile
 import os
 import time
 from dotenv import load_dotenv
-import os
 
 # Load environment variables from .env file
 load_dotenv()
@@ -209,8 +208,8 @@ def main():
 
     if st.button("Add Question"):
         if new_question.strip():
-            st.session_state["questions"].append(new_question)
-            st.session_state["types"].append(answer_type)
+            st.session_state["questions"].append(new_question.strip())
+            st.session_state["types"].append(answer_type.strip())
 
     if len(st.session_state["questions"]) > 0:
         questions_df = pd.DataFrame({
