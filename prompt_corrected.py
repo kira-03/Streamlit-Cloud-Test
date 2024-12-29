@@ -9,8 +9,8 @@ import os
 import time
 
 class GeminiResearchChatbot:
-    def __init__(self, api_keys, semantics_path="Semantics.json"):
-        self.api_keys = api_keys
+    def __init__(self, semantics_path="Semantics.json"):
+        self.api_keys = self.load_api_keys()
         self.current_key_index = 0
         self.set_current_api_key()
         self.model = genai.GenerativeModel('gemini-1.5-flash')
@@ -22,62 +22,41 @@ class GeminiResearchChatbot:
         self.documents = None
         self.semantics = self.load_semantics(semantics_path)
 
+    def load_api_keys(self):
+        """Load API keys from environment variables."""
+        keys = [
+            os.getenv("GEMINI_API_KEY_1"),
+            os.getenv("GEMINI_API_KEY_2"),
+            os.getenv("GEMINI_API_KEY_3"),
+            os.getenv("GEMINI_API_KEY_4"),
+            os.getenv("GEMINI_API_KEY_5"),
+            os.getenv("GEMINI_API_KEY_6"),
+        ]
+        return [key for key in keys if key]
+
     def set_current_api_key(self):
         genai.configure(api_key=self.api_keys[self.current_key_index])
 
     def load_semantics(self, path):
         try:
             with open(path, "r") as file:
-                semantics = json.load(file)
-            
-            # Preprocess semantics for easier lookup
-            processed_semantics = {}
-            for category, details in semantics.items():
-                processed_semantics[category] = {
-                    'attributes': details.get('attributes', []),
-                    'attributes_text': ', '.join(details.get('attributes', [])),
-                    'relations': details.get('relations', {}),
-                    'relations_text': ', '.join([
-                        f"{rel}: {', '.join(values)}" 
-                        for rel, values in details.get('relations', {}).items()
-                    ])
-                }
-            return processed_semantics
+                return json.load(file)
         except Exception as e:
             st.error(f"Error loading semantics: {str(e)}")
             return {}
 
     def expand_semantic_context(self, question):
         expanded_context = ""
-        matched_categories = set()
-
-        # Find matching semantic categories more comprehensively
         for category, details in self.semantics.items():
-            # Broader matching criteria
-            matches = (
-                category.lower() in question.lower() or 
-                any(attr.lower() in question.lower() for attr in details['attributes']) or
-                # Add more flexible matching conditions
-                any(keyword.lower() in question.lower() for keyword in 
-                    (category.split() + details['attributes'] + 
-                     list(details['relations'].keys()) + 
-                     [item for sublist in details['relations'].values() for item in sublist])
-                ))
-            
-            if matches:
-                matched_categories.add(category)
-        
-        # If no direct matches, include all semantics for broader context
-        if not matched_categories:
-            matched_categories = set(self.semantics.keys())
-
-        # Generate expanded context for matched categories
-        for category in matched_categories:
-            details = self.semantics[category]
-            expanded_context += f"\n--- {category} Semantic Context ---\n"
-            expanded_context += f"Attributes: {details['attributes_text']}\n"
-            expanded_context += f"Relations: {details['relations_text']}\n"
-
+            if category.lower() in question.lower():
+                expanded_context += f"Category: {category}\n"
+                if 'attributes' in details:
+                    expanded_context += f"Attributes: {', '.join(details['attributes'])}\n"
+                if 'relations' in details:
+                    relations_text = "\n".join(
+                        [f"{key}: {', '.join(values)}" for key, values in details['relations'].items()]
+                    )
+                    expanded_context += f"Relations: {relations_text}\n"
         return expanded_context
 
     def load_pdf(self, pdf_file):
@@ -113,12 +92,10 @@ class GeminiResearchChatbot:
             return ""
 
         try:
-            # Gather context from PDF
             context = ""
             for text in self.texts:
                 context += text.page_content + "\n"
 
-            # Expand context with semantic information
             semantic_context = self.expand_semantic_context(question)
             expanded_context = context + "\n" + semantic_context
 
@@ -172,8 +149,7 @@ class GeminiResearchChatbot:
                     else:
                         return ""
                 except Exception as e:
-                    error_message = str(e)
-                    if "429" in error_message:
+                    if "429" in str(e):
                         self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
                         time.sleep(1)
                     else:
@@ -183,15 +159,7 @@ class GeminiResearchChatbot:
             return ""
 
 def main():
-    api_keys = [
-        "AIzaSyCu-outMALnHfWrPtzoykEaNNH7nZfGc8k",
-        "AIzaSyAZPv5crGVACLGlZvaGscvrwifn836fUX4",
-        "AIzaSyDX6O5duEnhSTO4Vm0CmCWl8qD8McqqY1M",
-        "AIzaSyBt0ALH0jI2c4v0Ltb9OE9NThJmDRiz8fg", 
-        "AIzaSyBgCG4VrNgAcH6JTM669wWk0E-zDnCmoSw",
-        "AIzaSyCMm4CrNXBcuRKj_tZY4vOySWdqBDtESDo"
-    ]
-    chatbot = GeminiResearchChatbot(api_keys)
+    chatbot = GeminiResearchChatbot()
 
     st.title("MOF Insight: A Specialized QA Model for Metal-Organic Framework Literature")
 
@@ -237,61 +205,8 @@ def main():
             st.session_state["results"] = pd.DataFrame(all_results)
 
         df = st.session_state["results"]
-        st.write("### All Results (Before Filtering)")
+        st.write("### All Results")
         st.dataframe(df)
-
-        if not df.empty:
-            st.write("### Filter Results")
-            original_df = st.session_state["results"]
-
-            for column, q_type in zip([col for col in df.columns if col.lower() != "file"], ["String"] + st.session_state["types"]):
-                df[column] = df[column].astype(str)  # Ensure column is string for consistent processing
-
-                if q_type == "Integer/Float":
-                    # Check if the column data matches "value unit" or "value ± value unit" formats
-                    pattern = r"^\s*\d+(\.\d+)?(\s*±\s*\d+(\.\d+)?)?\s*[a-zA-Z²⁻¹/]*.*$"
-                    matches_format = df[column].str.match(pattern).fillna(False)
-
-                    # Replace invalid entries with NaN
-                    df.loc[~matches_format, column] = None
-
-                    if matches_format.any():  # Ensure there are valid numeric entries
-                        # Extract the primary numeric value before ± or units
-                        numeric_values = df[column].str.extract(r"([0-9]+(?:\.[0-9]+)?)")[0]
-                        numeric_values = pd.to_numeric(numeric_values, errors='coerce')
-
-                        if numeric_values.notnull().any():  # Ensure there are valid numeric values
-                            min_val, max_val = numeric_values.min(), numeric_values.max()
-                            if min_val == max_val:
-                                max_val = min_val + 1  # Adjust if min and max are the same
-
-                            # Slider for filtering numeric values
-                            lower_limit, upper_limit = st.slider(
-                                f"Filter for {column}:",
-                                min_value=float(min_val),
-                                max_value=float(max_val),
-                                value=(float(min_val), float(max_val)),
-                                step=0.1,
-                            )
-
-                            # Filter the DataFrame based on the slider range, include null values
-                            df = df[
-                                numeric_values.between(lower_limit, upper_limit, inclusive="both") | 
-                                df[column].isnull()
-                            ]
-
-                else:  # Use text input filter for non-numeric columns
-                    filter_value = st.text_input(f"Filter for {column}:")
-                    if filter_value.strip():
-                        # Include rows with null values
-                        df = df[
-                            df[column].str.contains(filter_value, case=False, na=False) | 
-                            df[column].isnull()
-                        ]
-
-            # Display the filtered results
-            st.write("### Filtered Results")
-            st.dataframe(df)
 
 if __name__ == "__main__":
     main()
