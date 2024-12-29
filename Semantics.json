@@ -1,0 +1,145 @@
+{
+    "Metal Ions": {
+        "attributes": [
+            "metal ion", 
+            "metallic", 
+            "element", 
+            "oxidation state", 
+            "metallic bond", 
+            "crystal lattice"
+        ],
+        "relations": {
+            "affects": [
+                "conductivity", 
+                "magnetic property", 
+                "reactivity", 
+                "corrosion resistance"
+            ],
+            "determines": [
+                "oxidation state", 
+                "metallic bond strength"
+            ],
+            "correlates with": [
+                "ionization energy", 
+                "electron cloud distribution", 
+                "hardness"
+            ]
+        }
+    },
+    "Porosity (nm BET)": {
+        "attributes": [
+            "porosity index", 
+            "pore size", 
+            "pore volume", 
+            "void fraction", 
+            "permeability"
+        ],
+        "relations": {
+            "affects": [
+                "diffusivity", 
+                "permeability", 
+                "adsorption rate"
+            ],
+            "determines": [
+                "surface area", 
+                "fluid flow rate"
+            ],
+            "correlates with": [
+                "pore size distribution", 
+                "material density"
+            ]
+        }
+    },
+    "Surface Area (BET)": {
+        "attributes": [
+            "BET surface area", 
+            "external surface area", 
+            "micropore surface area"
+        ],
+        "relations": {
+            "affects": [
+                "adsorption capacity", 
+                "reaction rate", 
+                "catalyst efficiency"
+            ],
+            "determines": [
+                "material reactivity", 
+                "diffusion efficiency"
+            ],
+            "correlates with": [
+                "porosity", 
+                "particle size"
+            ]
+        }
+    },
+    "Crystal Structure": {
+        "attributes": [
+            "lattice type", 
+            "crystal lattice", 
+            "symmetry", 
+            "grain size", 
+            "defect density"
+        ],
+        "relations": {
+            "affects": [
+                "conductivity", 
+                "hardness", 
+                "tensile strength"
+            ],
+            "determines": [
+                "metallic properties", 
+                "thermal conductivity"
+            ],
+            "correlates with": [
+                "oxidation state", 
+                "crystal defects", 
+                "material density"
+            ]
+        }
+    },
+    "Oxidation State": {
+        "attributes": [
+            "oxidation number", 
+            "charge state", 
+            "ionization energy"
+        ],
+        "relations": {
+            "affects": [
+                "reactivity", 
+                "corrosion rate", 
+                "bond strength"
+            ],
+            "determines": [
+                "electron configuration", 
+                "chemical stability"
+            ],
+            "correlates with": [
+                "crystal structure", 
+                "metallic bond strength"
+            ]
+        }
+    },
+    "Hardness": {
+        "attributes": [
+            "material hardness", 
+            "Mohs scale", 
+            "strength", 
+            "toughness"
+        ],
+        "relations": {
+            "affects": [
+                "wear resistance", 
+                "durability"
+            ],
+            "determines": [
+                "deformation resistance", 
+                "material strength"
+            ],
+            "correlates with": [
+                "crystal structure", 
+                "bond strength", 
+                "defect density"
+            ]
+        }
+    }
+}
