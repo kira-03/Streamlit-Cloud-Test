@@ -7,10 +7,23 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tempfile
 import os
 import time
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 class GeminiResearchChatbot:
     def __init__(self, semantics_path="Semantics.json"):
-        self.api_keys = self.load_api_keys()
+        # Load API keys from environment variables
+        self.api_keys = [
+            os.getenv("GEMINI_API_KEY_1"),
+            os.getenv("GEMINI_API_KEY_2"),
+            os.getenv("GEMINI_API_KEY_3"),
+            os.getenv("GEMINI_API_KEY_4"),
+            os.getenv("GEMINI_API_KEY_5"),
+            os.getenv("GEMINI_API_KEY_6")
+        ]
         self.current_key_index = 0
         self.set_current_api_key()
         self.model = genai.GenerativeModel('gemini-1.5-flash')
@@ -22,41 +35,62 @@ class GeminiResearchChatbot:
         self.documents = None
         self.semantics = self.load_semantics(semantics_path)
 
-    def load_api_keys(self):
-        """Load API keys from environment variables."""
-        keys = [
-            os.getenv("GEMINI_API_KEY_1"),
-            os.getenv("GEMINI_API_KEY_2"),
-            os.getenv("GEMINI_API_KEY_3"),
-            os.getenv("GEMINI_API_KEY_4"),
-            os.getenv("GEMINI_API_KEY_5"),
-            os.getenv("GEMINI_API_KEY_6"),
-        ]
-        return [key for key in keys if key]
-
     def set_current_api_key(self):
         genai.configure(api_key=self.api_keys[self.current_key_index])
 
     def load_semantics(self, path):
         try:
             with open(path, "r") as file:
-                return json.load(file)
+                semantics = json.load(file)
+            
+            # Preprocess semantics for easier lookup
+            processed_semantics = {}
+            for category, details in semantics.items():
+                processed_semantics[category] = {
+                    'attributes': details.get('attributes', []),
+                    'attributes_text': ', '.join(details.get('attributes', [])),
+                    'relations': details.get('relations', {}),
+                    'relations_text': ', '.join([ 
+                        f"{rel}: {', '.join(values)}" 
+                        for rel, values in details.get('relations', {}).items()
+                    ])
+                }
+            return processed_semantics
         except Exception as e:
             st.error(f"Error loading semantics: {str(e)}")
             return {}
 
     def expand_semantic_context(self, question):
         expanded_context = ""
+        matched_categories = set()
+
+        # Find matching semantic categories more comprehensively
         for category, details in self.semantics.items():
-            if category.lower() in question.lower():
-                expanded_context += f"Category: {category}\n"
-                if 'attributes' in details:
-                    expanded_context += f"Attributes: {', '.join(details['attributes'])}\n"
-                if 'relations' in details:
-                    relations_text = "\n".join(
-                        [f"{key}: {', '.join(values)}" for key, values in details['relations'].items()]
-                    )
-                    expanded_context += f"Relations: {relations_text}\n"
+            # Broader matching criteria
+            matches = (
+                category.lower() in question.lower() or 
+                any(attr.lower() in question.lower() for attr in details['attributes']) or
+                # Add more flexible matching conditions
+                any(keyword.lower() in question.lower() for keyword in 
+                    (category.split() + details['attributes'] + 
+                     list(details['relations'].keys()) + 
+                     [item for sublist in details['relations'].values() for item in sublist])
+                ))
+            
+            if matches:
+                matched_categories.add(category)
+        
+        # If no direct matches, include all semantics for broader context
+        if not matched_categories:
+            matched_categories = set(self.semantics.keys())
+
+        # Generate expanded context for matched categories
+        for category in matched_categories:
+            details = self.semantics[category]
+            expanded_context += f"\n--- {category} Semantic Context ---\n"
+            expanded_context += f"Attributes: {details['attributes_text']}\n"
+            expanded_context += f"Relations: {details['relations_text']}\n"
+
         return expanded_context
 
     def load_pdf(self, pdf_file):
@@ -92,10 +126,12 @@ class GeminiResearchChatbot:
             return ""
 
         try:
+            # Gather context from PDF
             context = ""
             for text in self.texts:
                 context += text.page_content + "\n"
 
+            # Expand context with semantic information
             semantic_context = self.expand_semantic_context(question)
             expanded_context = context + "\n" + semantic_context
 
@@ -149,7 +185,8 @@ class GeminiResearchChatbot:
                     else:
                         return ""
                 except Exception as e:
-                    if "429" in str(e):
+                    error_message = str(e)
+                    if "429" in error_message:
                         self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
                         time.sleep(1)
                     else:
@@ -172,41 +209,37 @@ def main():
 
     if st.button("Add Question"):
         if new_question.strip():
-            st.session_state["questions"].append(new_question.strip())
+            st.session_state["questions"].append(new_question)
             st.session_state["types"].append(answer_type)
-            st.success(f"Question added: {new_question} ({answer_type})")
+
+    if len(st.session_state["questions"]) > 0:
+        questions_df = pd.DataFrame({
+            "Questions": st.session_state["questions"],
+            "Answer Types": st.session_state["types"]
+        })
+
+        st.write("Questions in the Queue:")
+        st.write(questions_df)
+
+    uploaded_file = st.file_uploader("Upload your Research Paper (PDF)", type=["pdf"])
+
+    if uploaded_file:
+        if chatbot.load_pdf(uploaded_file):
+            st.success("PDF uploaded and ready for processing.")
         else:
-            st.warning("Question cannot be empty.")
+            st.error("There was an error with your PDF.")
 
-    st.write("### Questions:")
-    if st.session_state["questions"]:
-        for i, (question, q_type) in enumerate(zip(st.session_state["questions"], st.session_state["types"]), start=1):
-            st.write(f"{i}. {question} ({q_type})")
-
-    default_question = "Title: What is the title of the pdf?"
-    uploaded_files = st.file_uploader("Upload your PDF files", type="pdf", accept_multiple_files=True)
-
-    if (st.session_state["questions"] or uploaded_files) and uploaded_files:
-        if "results" not in st.session_state:
-            all_results = []
-
-            for uploaded_file in uploaded_files:
-                if chatbot.load_pdf(uploaded_file):
-                    st.success(f"PDF '{uploaded_file.name}' loaded successfully!")
-
-                    results_for_pdf = {"File": uploaded_file.name}
-                    for question, q_type in zip([default_question] + st.session_state["questions"], ["String"] + st.session_state["types"]):
-                        column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
-                        answer = chatbot.ask_question(question)
-                        results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
-
-                    all_results.append(results_for_pdf)
-
-            st.session_state["results"] = pd.DataFrame(all_results)
-
-        df = st.session_state["results"]
-        st.write("### All Results")
-        st.dataframe(df)
+    if st.button("Ask"):
+        question = new_question.strip()
+        answer_type = answer_type.strip()
+        if question:
+            answer = chatbot.ask_question(question)
+            if answer:
+                st.write(f"Answer: {answer}")
+            else:
+                st.write("Sorry, I couldn't retrieve an answer.")
+        else:
+            st.write("Please enter a question.")
 
 if __name__ == "__main__":
     main()
