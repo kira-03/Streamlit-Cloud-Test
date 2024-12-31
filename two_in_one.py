@@ -9,7 +9,7 @@ import os
 import time
 
 class GeminiResearchChatbot:
-    def __init__(self): 
+    def __init__(self):
         # Retrieve API keys from Streamlit secrets
         self.api_keys = [
             st.secrets["GEMINI_API_KEY_1"],
@@ -164,25 +164,6 @@ def main():
         .user-bubble { background-color: #333333; color: white; text-align: left; float: left; clear: both; }
         .bot-bubble { background-color: #555555; color: white; text-align: right; float: right; clear: both; }
         .chat-container { max-height: 400px; overflow-y: auto; padding: 10px; border: 1px solid #ccc; border-radius: 10px; background: #1e1e1e; }
-        .success-message { 
-            padding: 1rem;
-            border-radius: 0.5rem;
-            background-color: #1a472a;
-            border-left: 5px solid #2e8b57;
-            margin: 1rem 0;
-            animation: fadeIn 0.5s ease-in;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .question-list-item {
-            padding: 0.5rem;
-            background-color: #2c2c2c;
-            border-radius: 0.3rem;
-            margin: 0.5rem 0;
-            border-left: 3px solid #2e8b57;
-        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -226,55 +207,21 @@ def main():
         if "questions" not in st.session_state:
             st.session_state["questions"] = []
             st.session_state["types"] = []
-            st.session_state["show_success"] = False
-            st.session_state["last_added_question"] = ""
 
-        success_message_container = st.empty()
+        new_question = st.text_input("Enter a question:")
+        answer_type = st.selectbox("Select the answer type for the question:", ["String", "Integer/Float"])
 
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            new_question = st.text_input("Enter a question:", key="question_input")
-        with col2:
-            answer_type = st.selectbox("Answer type:", ["String", "Integer/Float"], key="type_select")
-
-        if st.button("Add Question", key="add_button"):
+        if st.button("Add Question"):
             if new_question.strip():
                 st.session_state["questions"].append(new_question.strip())
                 st.session_state["types"].append(answer_type)
-                st.session_state["show_success"] = True
-                st.session_state["last_added_question"] = new_question.strip()
-                st.rerun()
 
-        if st.session_state.get("show_success", False):
-        # Display the success message with smaller size and faster animation
-            with st.container():
-                st.markdown(
-                    """
-                    <div style="font-size:12px; color:green; animation: fadeOut 0.8s;">
-                        Question added successfully!
-                    </div>
-                    <style>
-                        @keyframes fadeOut {
-                            0% { opacity: 1; }
-                            100% { opacity: 0; }
-                        }
-                    </style>
-                    """,
-                    unsafe_allow_html=True
-                )
-        # Remove the success message after a short delay
-        time.sleep(0.8)
-        st.session_state["show_success"] = False
-
-        if st.session_state["questions"]:
-            st.markdown("### Current Questions")
-            for i, (q, t) in enumerate(zip(st.session_state["questions"], st.session_state["types"]), 1):
-                st.markdown(f"""
-                    <div class='question-list-item'>
-                        <span style='color: #2e8b57; font-weight: bold;'>{i}.</span> {q} 
-                        <span style='color: #888; font-size: 0.9em;'>({t})</span>
-                    </div>
-                """, unsafe_allow_html=True)
+        # Button to toggle visibility of questions
+        if st.button("Show All Questions"):
+            if st.session_state["questions"]:
+                st.write("### Questions Added So Far:")
+                for q in st.session_state["questions"]:
+                    st.write(f"- {q}")
 
         uploaded_files = st.file_uploader("Upload your PDF files", type="pdf", accept_multiple_files=True)
 
@@ -295,15 +242,11 @@ def main():
                         
                         all_results.append(results_for_pdf)
                     
-                    progress_bar.progress((i + 1) / len(uploaded_files))
+                    progress_bar.progress((i + 1) / len(uploaded_files))  # Update progress bar
 
             if all_results:
                 df_results = pd.DataFrame(all_results)
-                st.dataframe(
-                    df_results,
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.write(df_results)
 
 if __name__ == "__main__":
     main()
