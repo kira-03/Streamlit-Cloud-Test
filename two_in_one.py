@@ -2,7 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import pandas as pd
-from langchain.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tempfile
 import os
