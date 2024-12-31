@@ -10,12 +10,11 @@ import time
 
 class GeminiResearchChatbot:
     def __init__(self):
-        # Retrieve API keys from Streamlit secrets
         self.api_keys = [
-            st.secrets["GEMINI_API_KEY_1"],
-            st.secrets["GEMINI_API_KEY_2"],
-            st.secrets["GEMINI_API_KEY_3"],
-            st.secrets["GEMINI_API_KEY_4"]
+            "AIzaSyCu-outMALnHfWrPtzoykEaNNH7nZfGc8k",
+            "AIzaSyAZPv5crGVACLGlZvaGscvrwifn836fUX4",
+            "AIzaSyDX6O5duEnhSTO4Vm0CmCWl8qD8McqqY1M",
+            "AIzaSyBt0ALH0jI2c4v0Ltb9OE9NThJmDRiz8fg"
         ]
         self.current_key_index = 0
         self.set_current_api_key()
