@@ -246,14 +246,25 @@ def main():
                 st.rerun()
 
         if st.session_state.get("show_success", False):
-            success_message_container.markdown(f"""
-                <div class='success-message'>
-                    <h4 style='margin: 0; color: #2e8b57;'>✓ Question Added Successfully</h4>
-                    <p style='margin: 0.5rem 0 0 0; color: #e0e0e0;'>"{st.session_state["last_added_question"]}" has been added to your question list.</p>
-                </div>
-            """, unsafe_allow_html=True)
-            time.sleep(3)
-            st.session_state["show_success"] = False
+        # Display the success message with smaller size and faster animation
+            with st.container():
+                st.markdown(
+                    """
+                    <div style="font-size:12px; color:green; animation: fadeOut 0.8s;">
+                        Question added successfully!
+                    </div>
+                    <style>
+                        @keyframes fadeOut {
+                            0% { opacity: 1; }
+                            100% { opacity: 0; }
+                        }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+        # Remove the success message after a short delay
+        time.sleep(0.8)
+        st.session_state["show_success"] = False
 
         if st.session_state["questions"]:
             st.markdown("### Current Questions")
