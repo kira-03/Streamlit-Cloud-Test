@@ -243,7 +243,7 @@ def main():
                 st.session_state["types"].append(answer_type)
                 st.session_state["show_success"] = True
                 st.session_state["last_added_question"] = new_question.strip()
-                st.experimental_rerun()
+                st.rerun()
 
         if st.session_state.get("show_success", False):
             success_message_container.markdown(f"""
