@@ -9,7 +9,7 @@ import os
 import time
 
 class GeminiResearchChatbot:
-    def __init__(self):
+    def __init__(self): 
         # Retrieve API keys from Streamlit secrets
         self.api_keys = [
             st.secrets["GEMINI_API_KEY_1"],
