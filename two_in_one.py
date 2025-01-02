@@ -170,6 +170,15 @@ def main():
     st.title("Research Chatbot")
     chatbot = GeminiResearchChatbot()
 
+    # Initialize session states
+    if "questions" not in st.session_state:
+        st.session_state["questions"] = []
+        st.session_state["types"] = []
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "question_added" not in st.session_state:
+        st.session_state.question_added = False
+
     option = st.selectbox("Choose an option", ["Chatbot for 1 Paper", "Compare Multiple Papers"])
 
     if option == "Chatbot for 1 Paper":
@@ -177,9 +186,6 @@ def main():
         
         if uploaded_file:
             if chatbot.load_pdf(uploaded_file):
-                if "chat_history" not in st.session_state:
-                    st.session_state.chat_history = []
-                
                 st.write("### Chat History")
                 chat_container = st.empty()
 
@@ -204,49 +210,68 @@ def main():
                         render_chat()
 
     elif option == "Compare Multiple Papers":
-        if "questions" not in st.session_state:
-            st.session_state["questions"] = []
-            st.session_state["types"] = []
-
-        new_question = st.text_input("Enter a question:")
-        answer_type = st.selectbox("Select the answer type for the question:", ["String", "Integer/Float"])
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            new_question = st.text_input("Enter a question:")
+        with col2:
+            answer_type = st.selectbox("Select answer type:", ["String", "Integer/Float"])
 
         if st.button("Add Question"):
             if new_question.strip():
                 st.session_state["questions"].append(new_question.strip())
                 st.session_state["types"].append(answer_type)
+                st.success(f"✓ Question added: {new_question}")
+                st.session_state.question_added = True
+                
+        # Show all questions
+        if st.session_state["questions"]:
+            st.write("### Current Questions:")
+            for i, (q, t) in enumerate(zip(st.session_state["questions"], st.session_state["types"])):
+                st.write(f"{i+1}. {q} ({t})")
 
-        # Button to toggle visibility of questions
-        if st.button("Show All Questions"):
-            if st.session_state["questions"]:
-                st.write("### Questions Added So Far:")
-                for q in st.session_state["questions"]:
-                    st.write(f"- {q}")
-
+        # File uploader
         uploaded_files = st.file_uploader("Upload your PDF files", type="pdf", accept_multiple_files=True)
 
-        if uploaded_files:
-            all_results = []
-            
-            with st.spinner("Processing PDFs..."):
-                progress_bar = st.progress(0)
-
-                for i, uploaded_file in enumerate(uploaded_files):
-                    if chatbot.load_pdf(uploaded_file):
-                        results_for_pdf = {"File": uploaded_file.name}
-                        
-                        for question, q_type in zip(st.session_state["questions"], st.session_state["types"]):
-                            column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
-                            answer = chatbot.ask_question(question)
-                            results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
-                        
-                        all_results.append(results_for_pdf)
+        # Process button
+        if uploaded_files and st.session_state["questions"]:
+            if st.button("Process PDFs"):
+                all_results = []
+                
+                with st.spinner("Processing PDFs..."):
+                    progress_bar = st.progress(0)
                     
-                    progress_bar.progress((i + 1) / len(uploaded_files))  # Update progress bar
+                    for i, uploaded_file in enumerate(uploaded_files):
+                        if chatbot.load_pdf(uploaded_file):
+                            results_for_pdf = {"File": uploaded_file.name}
+                            
+                            for question, q_type in zip(st.session_state["questions"], st.session_state["types"]):
+                                column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
+                                full_question = f"{question} ({q_type})"  # Add type to question
+                                answer = chatbot.ask_question(full_question)
+                                results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
+                            
+                            all_results.append(results_for_pdf)
+                        
+                        progress_bar.progress((i + 1) / len(uploaded_files))
 
-            if all_results:
-                df_results = pd.DataFrame(all_results)
-                st.write(df_results)
+                if all_results:
+                    st.write("### Results:")
+                    df_results = pd.DataFrame(all_results)
+                    st.dataframe(df_results)
+                    
+                    # Add download button for results
+                    csv = df_results.to_csv(index=False)
+                    st.download_button(
+                        label="Download Results as CSV",
+                        data=csv,
+                        file_name="research_results.csv",
+                        mime="text/csv"
+                    )
+        elif uploaded_files and not st.session_state["questions"]:
+            st.warning("Please add at least one question before processing PDFs.")
+        elif not uploaded_files and st.session_state["questions"]:
+            st.info("Please upload PDF files to process.")
 
 if __name__ == "__main__":
     main()
