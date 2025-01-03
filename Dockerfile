@@ -11,26 +11,14 @@ RUN apt-get update && apt-get install -y \
     software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
-# Create .streamlit directory in the root user's home
-RUN mkdir -p /root/.streamlit/
-
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all application files
+# Copy the rest of the application, including hidden files like `.streamlit/`
 COPY . .
-
-# Ensure the .streamlit directory exists in the app directory
-RUN mkdir -p .streamlit
-
-# Copy secrets file to both locations to ensure it's available
-# First to the application directory
-RUN if [ -f .streamlit/secrets.toml ]; then \
-        cp .streamlit/secrets.toml /root/.streamlit/secrets.toml; \
-    fi
 
 # Expose port 8080 for Streamlit
 EXPOSE 8080
