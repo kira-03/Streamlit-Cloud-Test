@@ -7,18 +7,28 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tempfile
 import os
 import time
+from google.cloud import storage, secretmanager
+import io
 
 class GeminiResearchChatbot:
     def __init__(self):
-        # Retrieve API keys from Streamlit secrets
+        # Initialize Google Cloud clients
+        self.storage_client = storage.Client()
+        self.secret_manager_client = secretmanager.SecretManagerServiceClient()
+
+        # Fetch secrets from Google Cloud Secret Manager
+        self.bucket_name = self.get_secret("GCS_BUCKET_NAME")
         self.api_keys = [
-            st.secrets["GEMINI_API_KEY_1"],
-            st.secrets["GEMINI_API_KEY_2"],
-            st.secrets["GEMINI_API_KEY_3"],
-            st.secrets["GEMINI_API_KEY_4"]
+            self.get_secret("GEMINI_API_KEY_1"),
+            self.get_secret("GEMINI_API_KEY_2"),
+            self.get_secret("GEMINI_API_KEY_3"),
+            self.get_secret("GEMINI_API_KEY_4")
         ]
+
         self.current_key_index = 0
         self.set_current_api_key()
+
+        self.bucket = self.storage_client.bucket(self.bucket_name)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
@@ -26,18 +36,34 @@ class GeminiResearchChatbot:
             length_function=len
         )
         self.documents = None
-        
+
         try:
             self.semantics = self.load_semantics("Semantics.json")
         except:
             self.semantics = {}
 
-        self.prompt_one_paper = """You are a research assistant analyzing a single scientific paper. Provide clear and concise answers based on the context below. Limit your response to just the specific information requested. If the answer is not found, return a "Answer for this question is not provided". If question is asked to explain something, give a brief on what is asked. Context: {context} Semantic Context: {semantic_context} Question: {question} Answer:"""
+        self.prompt = """You are a research assistant analyzing a scientific paper. Using only the following context, provide a clear answer to the question. Limit your response to just the specific information needed, without any additional explanation. If value is asked then return only the value with its unit. The question has two parts part 1: actual question part 2: Either String or Integer/Float once the answer is fetched, depending upon the part 2, modify the answer accordingly before returning ..."""
 
-        self.prompt_multiple_papers = """You are a research assistant analyzing a scientific paper. Using only the following context, provide a clear answer to the question. Limit your response to just the specific information needed, without any additional explanation. If value is asked then return only the value with its unit. The question has two parts part 1: actual question part 2: Either String or Integer/Float once the answer is fetched, depending upon the part 2, modify the answer accordingly before returning For example: for the question metal : What are all the metals ions in the ZIF-8 compound? (String), the answer should be Zn²⁺,Cu²⁺ for the question porosity_nature : What is the porous nature of the ZIF-8 compound(just specify if microporous or mesoporous or macorporous)? (String) the answer should be either microporous or mesoporous or macorporous or Null string for the question surface_area : What is the surface area of the ZIF-8 compound? (Integer/Float) the answer should be like 1171.3 m²/g or 1867 m² g⁻¹ (if the answer is any other unit, then change it to the most IUPAC unit) for the question dimension : What is the dimension of the ZIF-8 compound (say either 2D or 3D)? (String) the answer should be either 2D or 3D or Null string for the question morphology : What is the morphology of the ZIF-8 compound? (String) the answer should be like leaf-shaped or rhombic dodecahedron etc. for the question size : What is the size of the ZIF-8 compound? (Integer/Float) the answer should be a value like 270 nm, if any other units are fetched, then change it to IUPAC unit If the answer is not there in the pdf, then return a Null string If a value with new unit is fetched, then try to convert it to the unit which is widely used for that question Technical Context from Research Paper: {context} Semantic Context: {semantic_context} Question: {question} Answer:"""
+    def get_secret(self, secret_name):
+        """Fetch a secret from Google Cloud Secret Manager"""
+        project_id = os.environ.get("GCP_PROJECT_ID")
+        secret_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+        response = self.secret_manager_client.access_secret_version(request={"name": secret_path})
+        return response.payload.data.decode("UTF-8")
 
     def set_current_api_key(self):
         genai.configure(api_key=self.api_keys[self.current_key_index])
+
+    def list_pdf_files(self):
+        """List all PDF files in the storage bucket"""
+        blobs = self.storage_client.list_blobs(self.bucket_name, prefix="pdfs/")
+        return [blob.name for blob in blobs if blob.name.lower().endswith('.pdf')]
+
+    def download_pdf_from_storage(self, blob_name):
+        """Download a PDF file from storage and return it as a bytes object"""
+        blob = self.bucket.blob(blob_name)
+        pdf_content = blob.download_as_bytes()
+        return io.BytesIO(pdf_content)
 
     def load_semantics(self, path):
         try:
@@ -69,73 +95,68 @@ class GeminiResearchChatbot:
             )
             if matches:
                 matched_categories.add(category)
-        
+
         if not matched_categories:
             matched_categories = set(self.semantics.keys())
-        
+
         for category in matched_categories:
             details = self.semantics[category]
             expanded_context += f"\n--- {category} Semantic Context ---\n"
             expanded_context += f"Attributes: {details['attributes_text']}\n"
             expanded_context += f"Relations: {details['relations_text']}\n"
-        
+
         return expanded_context
 
-    def load_pdf(self, pdf_file):
+    def load_pdf(self, pdf_file, from_storage=False):
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                temp_file.write(pdf_file.read())
+                if from_storage:
+                    temp_file.write(pdf_file.read())
+                else:
+                    pdf_file.seek(0)
+                    temp_file.write(pdf_file.read())
                 temp_file_path = temp_file.name
-            
+
             loader = PyPDFLoader(temp_file_path)
             self.documents = loader.load()
-            
+
             if not self.documents:
                 return False
-            
+
             self.texts = self.text_splitter.split_documents(self.documents)
-            
-            if not self.texts:
-                return False
-            
-            return True
-        
+
+            return bool(self.texts)
+
         except Exception as e:
+            st.error(f"Error loading PDF: {str(e)}")
             return False
-        
+
         finally:
             if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
 
-    def ask_question(self, question, option=""):
+    def ask_question(self, question):
         if not self.documents:
             return ""
-        
+
         try:
             context = ""
             for text in self.texts:
                 context += text.page_content + "\n"
-            
+
             semantic_context = self.expand_semantic_context(question)
-            
-            if option == "Chatbot for 1 Paper":
-                prompt = self.prompt_one_paper.format(
-                    context=context,
-                    semantic_context=semantic_context,
-                    question=question
-                )
-            else:
-                prompt = self.prompt_multiple_papers.format(
-                    context=context,
-                    semantic_context=semantic_context,
-                    question=question
-                )
-            
+
+            prompt = self.prompt.format(
+                context=context,
+                semantic_context=semantic_context,
+                question=question
+            )
+
             while True:
                 try:
                     self.set_current_api_key()
                     response = self.model.generate_content(prompt)
-                    
+
                     if response and response.text.strip():
                         answer = response.text.strip()
                         if "does not contain" in answer.lower() or "does not give" in answer.lower():
@@ -143,7 +164,7 @@ class GeminiResearchChatbot:
                         return answer
                     else:
                         return ""
-                
+
                 except Exception as e:
                     error_message = str(e)
                     if "429" in error_message:
@@ -151,116 +172,78 @@ class GeminiResearchChatbot:
                         time.sleep(1)
                     else:
                         return ""
-        
+
         except Exception as e:
             return ""
 
 def main():
-    st.set_page_config(page_title="Research Chatbot", layout="wide")
+    st.set_page_config(page_title="Research Paper Comparison", layout="wide")
     st.markdown("""
     <style>
         body { background-color: #121212; color: white; }
-        .chat-bubble { padding: 10px 15px; border-radius: 20px; margin: 5px 0; display: inline-block; }
-        .user-bubble { background-color: #333333; color: white; text-align: left; float: left; clear: both; }
-        .bot-bubble { background-color: #555555; color: white; text-align: right; float: right; clear: both; }
-        .chat-container { max-height: 400px; overflow-y: auto; padding: 10px; border: 1px solid #ccc; border-radius: 10px; background: #1e1e1e; }
     </style>
     """, unsafe_allow_html=True)
 
-    st.title("Research Chatbot")
+    st.title("Research Paper Comparison")
     chatbot = GeminiResearchChatbot()
 
     # Initialize session states
     if "questions" not in st.session_state:
         st.session_state["questions"] = []
         st.session_state["types"] = []
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
     if "question_added" not in st.session_state:
         st.session_state.question_added = False
 
-    option = st.selectbox("Choose an option", ["Chatbot for 1 Paper", "Compare Multiple Papers"])
+    # Question input section
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        new_question = st.text_input("Enter a question:")
+    with col2:
+        answer_type = st.selectbox("Select answer type:", ["String", "Integer/Float"])
 
-    if option == "Chatbot for 1 Paper":
-        uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
-        
-        if uploaded_file:
-            if chatbot.load_pdf(uploaded_file):
-                st.write("### Chat History")
-                chat_container = st.empty()
+    if st.button("Add Question"):
+        if new_question.strip():
+            st.session_state["questions"].append(new_question.strip())
+            st.session_state["types"].append(answer_type)
+            st.success(f"✓ Question added: {new_question}")
+            st.session_state.question_added = True
 
-                def render_chat():
-                    with chat_container.container():
-                        for message in st.session_state.chat_history:
-                            if message["sender"] == "user":
-                                st.markdown(f"<div class='chat-bubble user-bubble'>{message['content']}</div>", unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"<div class='chat-bubble bot-bubble'>{message['content']}</div>", unsafe_allow_html=True)
+    if st.session_state["questions"]:
+        st.write("### Current Questions:")
+        for i, (q, t) in enumerate(zip(st.session_state["questions"], st.session_state["types"])):
+            st.write(f"{i+1}. {q} ({t})")
 
-                render_chat()
+    # PDF processing section
+    stored_files = chatbot.list_pdf_files()
+    if stored_files:
+        selected_files = st.multiselect("Select PDFs from storage", stored_files)
 
-                with st.container():
-                    question = st.text_input("Type your question here...")
-                    
-                    if st.button("Send", key="send_button") and question.strip():
-                        st.session_state.chat_history.append({"sender": "user", "content": question})
-                        render_chat()
-                        answer = chatbot.ask_question(question, "Chatbot for 1 Paper")
-                        st.session_state.chat_history.append({"sender": "bot", "content": answer})
-                        render_chat()
-
-    elif option == "Compare Multiple Papers":
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            new_question = st.text_input("Enter a question:")
-        with col2:
-            answer_type = st.selectbox("Select answer type:", ["String", "Integer/Float"])
-
-        if st.button("Add Question"):
-            if new_question.strip():
-                st.session_state["questions"].append(new_question.strip())
-                st.session_state["types"].append(answer_type)
-                st.success(f"✓ Question added: {new_question}")
-                st.session_state.question_added = True
-                
-        # Show all questions
-        if st.session_state["questions"]:
-            st.write("### Current Questions:")
-            for i, (q, t) in enumerate(zip(st.session_state["questions"], st.session_state["types"])):
-                st.write(f"{i+1}. {q} ({t})")
-
-        # File uploader
-        uploaded_files = st.file_uploader("Upload your PDF files", type="pdf", accept_multiple_files=True)
-
-        # Process button
-        if uploaded_files and st.session_state["questions"]:
-            if st.button("Process PDFs"):
+        if selected_files and st.session_state["questions"]:
+            if st.button("Process Selected PDFs"):
                 all_results = []
-                
                 with st.spinner("Processing PDFs..."):
                     progress_bar = st.progress(0)
-                    
-                    for i, uploaded_file in enumerate(uploaded_files):
-                        if chatbot.load_pdf(uploaded_file):
-                            results_for_pdf = {"File": uploaded_file.name}
-                            
+
+                    for i, file_name in enumerate(selected_files):
+                        pdf_content = chatbot.download_pdf_from_storage(file_name)
+                        if chatbot.load_pdf(pdf_content, from_storage=True):
+                            results_for_pdf = {"File": file_name}
+
                             for question, q_type in zip(st.session_state["questions"], st.session_state["types"]):
                                 column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
-                                full_question = f"{question} ({q_type})"  # Add type to question
+                                full_question = f"{question} ({q_type})"
                                 answer = chatbot.ask_question(full_question)
                                 results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
-                            
+
                             all_results.append(results_for_pdf)
-                        
-                        progress_bar.progress((i + 1) / len(uploaded_files))
+
+                        progress_bar.progress((i + 1) / len(selected_files))
 
                 if all_results:
                     st.write("### Results:")
                     df_results = pd.DataFrame(all_results)
                     st.dataframe(df_results)
-                    
-                    # Add download button for results
+
                     csv = df_results.to_csv(index=False)
                     st.download_button(
                         label="Download Results as CSV",
@@ -268,10 +251,8 @@ def main():
                         file_name="research_results.csv",
                         mime="text/csv"
                     )
-        elif uploaded_files and not st.session_state["questions"]:
-            st.warning("Please add at least one question before processing PDFs.")
-        elif not uploaded_files and st.session_state["questions"]:
-            st.info("Please upload PDF files to process.")
+    else:
+        st.info("No PDFs found in storage. Please contact your administrator to upload PDF files.")
 
 if __name__ == "__main__":
     main()

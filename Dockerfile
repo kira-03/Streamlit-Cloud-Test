@@ -11,13 +11,16 @@ RUN apt-get update && apt-get install -y \
     software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
+# Create directory for credentials
+RUN mkdir -p /app/secrets
+
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application, including hidden files like `.streamlit/`
+# Copy the rest of the application
 COPY . .
 
 # Expose port 8080 for Streamlit
