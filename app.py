@@ -7,24 +7,23 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tempfile
 import os
 import time
-from google.cloud import storage, secretmanager
+from google.cloud import storage
 import io
 
 class GeminiResearchChatbot:
     def __init__(self):
-        # Initialize Google Cloud clients
-        self.storage_client = storage.Client()
-        self.secret_manager_client = secretmanager.SecretManagerServiceClient()
-
-        # Fetch secrets from Google Cloud Secret Manager
-        self.bucket_name = self.get_secret("GCS_BUCKET_NAME")
+        # Load secrets from Streamlit's secrets manager
+        self.bucket_name = st.secrets["GCS_BUCKET_NAME"]
         self.api_keys = [
-            self.get_secret("GEMINI_API_KEY_1"),
-            self.get_secret("GEMINI_API_KEY_2"),
-            self.get_secret("GEMINI_API_KEY_3"),
-            self.get_secret("GEMINI_API_KEY_4")
+            st.secrets["GEMINI_API_KEY_1"],
+            st.secrets["GEMINI_API_KEY_2"],
+            st.secrets["GEMINI_API_KEY_3"],
+            st.secrets["GEMINI_API_KEY_4"]
         ]
-
+        
+        # Initialize Google Cloud Storage client with default credentials
+        self.storage_client = storage.Client(project=st.secrets["GCP_PROJECT_ID"])
+        
         self.current_key_index = 0
         self.set_current_api_key()
 
@@ -42,28 +41,55 @@ class GeminiResearchChatbot:
         except:
             self.semantics = {}
 
-        self.prompt = """You are a research assistant analyzing a scientific paper. Using only the following context, provide a clear answer to the question. Limit your response to just the specific information needed, without any additional explanation. If value is asked then return only the value with its unit. The question has two parts part 1: actual question part 2: Either String or Integer/Float once the answer is fetched, depending upon the part 2, modify the answer accordingly before returning ..."""
+        self.prompt = """You are a research assistant analyzing a scientific paper. Using only the following context, provide a clear answer to the question. Limit your response to just the specific information needed, without any additional explanation. If value is asked then return only the value with its unit. The question has two parts part 1: actual question part 2: Either String or Integer/Float once the answer is fetched, depending upon the part 2, modify the answer accordingly before returning
 
-    def get_secret(self, secret_name):
-        """Fetch a secret from Google Cloud Secret Manager"""
-        project_id = os.environ.get("GCP_PROJECT_ID")
-        secret_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
-        response = self.secret_manager_client.access_secret_version(request={"name": secret_path})
-        return response.payload.data.decode("UTF-8")
+For example:
+for the question metal : What are all the metals ions in the ZIF-8 compound? (String), the answer should be ZnÂ²âº,CuÂ²âº
+
+for the question porosity_nature : What is the porous nature of the ZIF-8 compound(just specify if microporous or mesoporous or macorporous)? (String)
+the answer should be either microporous or mesoporous or macorporous or Null string
+
+for the question surface_area : What is the surface area of the ZIF-8 compound? (Integer/Float)
+the answer should be like 1171.3 mÂ²/g or 1867 mÂ² gâ»Â¹ (if the answer is any other unit, then change it to the most IUPAC unit)
+
+for the question dimension : What is the dimension of the ZIF-8 compound (say either 2D or 3D)? (String)
+the answer should be either 2D or 3D or Null string
+
+for the question morphology : What is the morphology of the ZIF-8 compound? (String)
+the answer should be like leaf-shaped or rhombic dodecahedron etc.
+
+for the question size : What is the size of the ZIF-8 compound? (Integer/Float)
+the answer should be a value like 270 nm, if any other units are fetched, then change it to IUPAC unit
+
+If the answer is not there in the pdf, then return a Null string
+If a value with new unit is fetched, then try to convert it to the unit which is widely used for that question
+
+Technical Context from Research Paper: {context}
+Semantic Context: {semantic_context}
+Question: {question}
+Answer:"""
 
     def set_current_api_key(self):
         genai.configure(api_key=self.api_keys[self.current_key_index])
 
     def list_pdf_files(self):
         """List all PDF files in the storage bucket"""
-        blobs = self.storage_client.list_blobs(self.bucket_name, prefix="pdfs/")
-        return [blob.name for blob in blobs if blob.name.lower().endswith('.pdf')]
+        try:
+            blobs = self.storage_client.list_blobs(self.bucket_name, prefix="pdfs/")
+            return [blob.name for blob in blobs if blob.name.lower().endswith('.pdf')]
+        except Exception as e:
+            st.error(f"Error accessing storage bucket: {str(e)}")
+            return []
 
     def download_pdf_from_storage(self, blob_name):
         """Download a PDF file from storage and return it as a bytes object"""
-        blob = self.bucket.blob(blob_name)
-        pdf_content = blob.download_as_bytes()
-        return io.BytesIO(pdf_content)
+        try:
+            blob = self.bucket.blob(blob_name)
+            pdf_content = blob.download_as_bytes()
+            return io.BytesIO(pdf_content)
+        except Exception as e:
+            st.error(f"Error downloading PDF: {str(e)}")
+            return None
 
     def load_semantics(self, path):
         try:
@@ -79,6 +105,7 @@ class GeminiResearchChatbot:
                     }
                 return processed_semantics
         except Exception as e:
+            st.warning(f"Could not load semantics file: {str(e)}")
             return {}
 
     def expand_semantic_context(self, question):
@@ -174,6 +201,7 @@ class GeminiResearchChatbot:
                         return ""
 
         except Exception as e:
+            st.error(f"Error processing question: {str(e)}")
             return ""
 
 def main():
@@ -185,14 +213,20 @@ def main():
     """, unsafe_allow_html=True)
 
     st.title("Research Paper Comparison")
-    chatbot = GeminiResearchChatbot()
-
+    
     # Initialize session states
+    if 'chatbot' not in st.session_state:
+        try:
+            st.session_state.chatbot = GeminiResearchChatbot()
+        except Exception as e:
+            st.error(f"Error initializing chatbot: {str(e)}")
+            return
+
     if "questions" not in st.session_state:
-        st.session_state["questions"] = []
-        st.session_state["types"] = []
-    if "question_added" not in st.session_state:
-        st.session_state.question_added = False
+        st.session_state.questions = []
+        st.session_state.types = []
+    if "results" not in st.session_state:
+        st.session_state.results = None
 
     # Question input section
     col1, col2 = st.columns([3, 1])
@@ -203,56 +237,62 @@ def main():
 
     if st.button("Add Question"):
         if new_question.strip():
-            st.session_state["questions"].append(new_question.strip())
-            st.session_state["types"].append(answer_type)
-            st.success(f"✓ Question added: {new_question}")
-            st.session_state.question_added = True
+            st.session_state.questions.append(new_question.strip())
+            st.session_state.types.append(answer_type)
+            st.success(f"Question added: {new_question}")
 
-    if st.session_state["questions"]:
+    # Display current questions
+    if st.session_state.questions:
         st.write("### Current Questions:")
-        for i, (q, t) in enumerate(zip(st.session_state["questions"], st.session_state["types"])):
+        for i, (q, t) in enumerate(zip(st.session_state.questions, st.session_state.types)):
             st.write(f"{i+1}. {q} ({t})")
 
-    # PDF processing section
-    stored_files = chatbot.list_pdf_files()
-    if stored_files:
-        selected_files = st.multiselect("Select PDFs from storage", stored_files)
-
-        if selected_files and st.session_state["questions"]:
-            if st.button("Process Selected PDFs"):
+        # Process PDFs button
+        if st.button("Process PDFs"):
+            stored_files = st.session_state.chatbot.list_pdf_files()
+            if stored_files:
                 all_results = []
-                with st.spinner("Processing PDFs..."):
-                    progress_bar = st.progress(0)
+                processing_container = st.empty()
+                progress_bar = st.progress(0)
+                total_files = len(stored_files)
 
-                    for i, file_name in enumerate(selected_files):
-                        pdf_content = chatbot.download_pdf_from_storage(file_name)
-                        if chatbot.load_pdf(pdf_content, from_storage=True):
-                            results_for_pdf = {"File": file_name}
+                for i, file_name in enumerate(stored_files):
+                    processing_container.write(f"Processing: {file_name}")
+                    pdf_content = st.session_state.chatbot.download_pdf_from_storage(file_name)
+                    
+                    if pdf_content and st.session_state.chatbot.load_pdf(pdf_content, from_storage=True):
+                        results_for_pdf = {"File": file_name}
 
-                            for question, q_type in zip(st.session_state["questions"], st.session_state["types"]):
-                                column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
-                                full_question = f"{question} ({q_type})"
-                                answer = chatbot.ask_question(full_question)
-                                results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
+                        for question, q_type in zip(st.session_state.questions, st.session_state.types):
+                            column_title = question.split(":", 1)[0].strip() if ":" in question else question.strip()
+                            full_question = f"{question} ({q_type})"
+                            answer = st.session_state.chatbot.ask_question(full_question)
+                            results_for_pdf[column_title] = f"{answer}" if answer else "N/A"
 
-                            all_results.append(results_for_pdf)
-
-                        progress_bar.progress((i + 1) / len(selected_files))
+                        all_results.append(results_for_pdf)
+                    
+                    progress_bar.progress((i + 1) / total_files)
 
                 if all_results:
-                    st.write("### Results:")
-                    df_results = pd.DataFrame(all_results)
-                    st.dataframe(df_results)
+                    st.session_state.results = pd.DataFrame(all_results)
+                    processing_container.empty()
+                    progress_bar.empty()
 
-                    csv = df_results.to_csv(index=False)
-                    st.download_button(
-                        label="Download Results as CSV",
-                        data=csv,
-                        file_name="research_results.csv",
-                        mime="text/csv"
-                    )
-    else:
-        st.info("No PDFs found in storage. Please contact your administrator to upload PDF files.")
+            else:
+                st.error("No PDFs found in storage. Please ensure PDFs are uploaded to the storage bucket.")
+
+    # Display results if they exist
+    if st.session_state.results is not None:
+        st.write("### Results:")
+        st.dataframe(st.session_state.results)
+
+        csv = st.session_state.results.to_csv(index=False)
+        st.download_button(
+            label="Download Results as CSV",
+            data=csv,
+            file_name="research_results.csv",
+            mime="text/csv"
+        )
 
 if __name__ == "__main__":
     main()
